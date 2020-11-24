@@ -12,8 +12,7 @@
  */
 package com.amazonaws.serverless.proxy.internal.jaxrs;
 
-import com.amazonaws.serverless.proxy.model.AwsProxyRequest;
-import com.amazonaws.serverless.proxy.model.CognitoAuthorizerClaims;
+import com.amazonaws.serverless.proxy.model.*;
 import com.amazonaws.services.lambda.runtime.Context;
 
 import javax.ws.rs.core.SecurityContext;
@@ -79,26 +78,29 @@ public class AwsProxySecurityContext
 
     @Override
     public Principal getUserPrincipal() {
-        if (getAuthenticationScheme() == null) {
+        final String authenticationScheme = getAuthenticationScheme();
+        if (authenticationScheme == null) {
             return () -> null;
         }
 
-        if (getAuthenticationScheme().equals(AUTH_SCHEME_CUSTOM) || getAuthenticationScheme().equals(AUTH_SCHEME_AWS_IAM)) {
+        if (authenticationScheme.equals(AUTH_SCHEME_CUSTOM) || authenticationScheme.equals(AUTH_SCHEME_AWS_IAM)) {
             return () -> {
-                if (getAuthenticationScheme().equals(AUTH_SCHEME_CUSTOM)) {
-                    switch (event.getRequestSource()) {
-                    case API_GATEWAY:
-                        return event.getRequestContext().getAuthorizer().getPrincipalId();
-                    case ALB:
-                        return event.getMultiValueHeaders().getFirst(ALB_IDENTITY_HEADER);
-                    }
-                } else if (getAuthenticationScheme().equals(AUTH_SCHEME_AWS_IAM)) {
-                    // if we received credentials from Cognito Federated Identities then we return the identity id
-                    if (event.getRequestContext().getIdentity().getCognitoIdentityId() != null) {
-                        return event.getRequestContext().getIdentity().getCognitoIdentityId();
-                    } else { // otherwise the user arn from the credentials
-                        return event.getRequestContext().getIdentity().getUserArn();
-                    }
+                switch (authenticationScheme) {
+                    case AUTH_SCHEME_CUSTOM:
+                        switch (event.getRequestSource()) {
+                            case API_GATEWAY:
+                                return event.getRequestContext().getAuthorizer().getPrincipalId();
+                            case ALB:
+                                return event.getMultiValueHeaders().getFirst(ALB_IDENTITY_HEADER);
+                        }
+                    case AUTH_SCHEME_AWS_IAM:
+                        final ApiGatewayRequestIdentity identity = event.getRequestContext().getIdentity();
+                        // if we received credentials from Cognito Federated Identities then we return the identity id
+                        if (identity.getCognitoIdentityId() != null) {
+                            return identity.getCognitoIdentityId();
+                        } else { // otherwise the user arn from the credentials
+                            return identity.getUserArn();
+                        }
                 }
 
                 // return null if we couldn't find a valid scheme
@@ -106,7 +108,7 @@ public class AwsProxySecurityContext
             };
         }
 
-        if (getAuthenticationScheme().equals(AUTH_SCHEME_COGNITO_POOL)) {
+        if (authenticationScheme.equals(AUTH_SCHEME_COGNITO_POOL)) {
             return new CognitoUserPoolPrincipal(event.getRequestContext().getAuthorizer().getClaims());
         }
 
@@ -116,7 +118,7 @@ public class AwsProxySecurityContext
 
     @Override
     public boolean isUserInRole(String role) {
-        return (role.equals(event.getRequestContext().getIdentity().getUserArn()));
+        return role != null && role.equals(event.getRequestContext().getIdentity().getUserArn());
     }
 
 
@@ -130,20 +132,22 @@ public class AwsProxySecurityContext
     public String getAuthenticationScheme() {
         switch (event.getRequestSource()) {
         case API_GATEWAY:
-            if (event.getRequestContext().getAuthorizer() != null && event.getRequestContext().getAuthorizer().getClaims() != null
-                && event.getRequestContext().getAuthorizer().getClaims().getSubject() != null) {
+            final AwsProxyRequestContext requestContext = event.getRequestContext();
+            final ApiGatewayAuthorizerContext authorizer = requestContext.getAuthorizer();
+            final ApiGatewayRequestIdentity identity = requestContext.getIdentity();
+            if (authorizer != null && authorizer.getClaims() != null && authorizer.getClaims().getSubject() != null) {
                 return AUTH_SCHEME_COGNITO_POOL;
-            } else if (event.getRequestContext().getAuthorizer() != null) {
+            } else if (authorizer != null) {
                 return AUTH_SCHEME_CUSTOM;
-            } else if (event.getRequestContext().getIdentity().getAccessKey() != null) {
+            } else if (identity != null && identity.getAccessKey() != null) {
                 return AUTH_SCHEME_AWS_IAM;
-            } else {
-                return null;
             }
+            break;
         case ALB:
             if (event.getMultiValueHeaders().containsKey(ALB_ACESS_TOKEN_HEADER)) {
                 return AUTH_SCHEME_CUSTOM;
             }
+            break;
         }
         return null;
     }

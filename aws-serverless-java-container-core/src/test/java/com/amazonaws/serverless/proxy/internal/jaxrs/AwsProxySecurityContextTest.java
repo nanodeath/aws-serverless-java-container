@@ -25,6 +25,7 @@ public class AwsProxySecurityContextTest {
             .header(ALB_ACESS_TOKEN_HEADER, "xxxxx")
             .header(ALB_IDENTITY_HEADER, COGNITO_IDENTITY_ID)
             .build();
+    private static final AwsProxyRequest APIG_REQUEST_NO_IDENTITY = clearIdentity(new AwsProxyRequestBuilder("/hello", "GET").build());
 
     @Test
     public void localVars_constructor_nullValues() {
@@ -81,5 +82,35 @@ public class AwsProxySecurityContextTest {
         assertTrue(userPrincipal instanceof AwsProxySecurityContext.CognitoUserPoolPrincipal);
         assertNotNull(((AwsProxySecurityContext.CognitoUserPoolPrincipal)userPrincipal).getClaims().getClaim(CLAIM_KEY));
         assertEquals(CLAIM_VALUE, ((AwsProxySecurityContext.CognitoUserPoolPrincipal)userPrincipal).getClaims().getClaim(CLAIM_KEY));
+    }
+
+    @Test
+    public void apig_noIdentity_expectEmptyScheme() {
+        // A minimal 2.0-style request from API Gateway might look like this:
+        /*
+{
+    "body": "{}",
+    "requestContext": {
+        "apiId": "dgsgshsh",
+        "requestId": "abcdefg",
+        "accountId": "12345678",
+        "stage": "$default",
+        "requestTimeEpoch": 0
+    },
+    "isBase64Encoded": false,
+    "requestSource": "API_GATEWAY"
+}
+         */
+        // Notice how there's no identity whatsoever.
+        AwsProxySecurityContext context = new AwsProxySecurityContext(null, APIG_REQUEST_NO_IDENTITY);
+        assertEquals(APIG_REQUEST_NO_IDENTITY, context.getEvent());
+        assertNull(context.getLambdaContext());
+        assertFalse(context.isSecure());
+        assertNull(context.getAuthenticationScheme());
+    }
+
+    private static AwsProxyRequest clearIdentity(AwsProxyRequest awsProxyRequest) {
+        awsProxyRequest.getRequestContext().setIdentity(null);
+        return awsProxyRequest;
     }
 }
